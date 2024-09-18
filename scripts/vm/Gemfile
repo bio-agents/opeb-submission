@@ -1,0 +1,11 @@
+source 'https://rubygems.org'
+
+ruby '>=2.4.3'
+group :development do
+  gem "vagrant", git: "https://github.com/hashicorp/vagrant", :tag => "v2.0.4"
+end
+
+group :plugins do
+  gem "vagrant-host-shell"
+  gem "vagrant-vbguest"
+end

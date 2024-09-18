@@ -1,0 +1,13 @@
+:service_flags:
+  :sftp: true
+  :tusd: true
+  :nextflow: true
+  :opeb_submission_api: true
+  :mongodb: true
+:test_flags:
+  :sftp: true
+  :tusd: true
+  :nextflow: true
+  :opeb_submission_api: true
+  :mongodb: true
+

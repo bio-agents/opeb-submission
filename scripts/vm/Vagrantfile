@@ -1,0 +1,166 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure('2') do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
+
+  # Every Vagrant development environment requires a box. You can search for
+  # boxes at https://vagrantcloud.com/search.
+  config.vm.box = 'ubuntu/xenial64'
+  config.vm.provider 'virtualbox' do |v|
+    v.name   = 'OpenEBench'
+    v.memory = 4096
+    v.cpus   = 4
+  end
+
+  # load vm_config
+  require 'yaml'
+  vm_config = YAML::load_file('vm_config.yml')
+  # Disable test if the service is disabled
+  vm_config[:service_flags].each_key do |service|
+    vm_config[:test_flags][service] = false unless vm_config[:service_flags][service]
+  end
+
+  # Remove defeault vagrant synced_folder binding
+  config.vm.synced_folder '../..', '/vagrant', disabled: false
+
+  # Use vagrant-cachier plugin if exists for speed up the package management
+  config.cache.scope = :box if Vagrant.has_plugin?('vagrant-cachier')
+
+  # Use vagrant-vbguest plugin if exists for speed up the package management
+  if Vagrant.has_plugin?('vagrant-vbguest')
+    # set auto_update to false, if you do not want to check the correct
+    # additions version when booting this machine
+    config.vbguest.auto_update = false
+  end
+
+  # Copy provision folders to the guest machine
+  config.vm.provision 'file', source: '../sftp/',  destination: '/tmp/sftp'
+  config.vm.provision 'file', source: '../tusd/',  destination: '/tmp/tusd'
+  config.vm.provision 'file', source: '../tests', destination: '/tmp/tests'
+
+  if vm_config[:service_flags].values.any?
+    config.vm.provision 'shell', inline: 'apt update'
+  end
+
+  # Run provision scripts from the guest machine
+  if vm_config[:service_flags][:sftp]
+    config.vm.network 'forwarded_port', guest: 22,   host: 8022
+    config.vm.network 'forwarded_port', guest: 2222, host: 8222
+    config.vm.provision 'shell', inline: 'apt update && apt install -y openssh-server sshpass 2>&1 > /dev/null'
+    config.vm.provision 'shell', inline: '/tmp/sftp/installer/doInstall.sh'
+  end
+
+  if vm_config[:test_flags].values.any?
+    config.vm.provision 'shell', inline: '/tmp/tests/doInstall.sh 2>&1 > /dev/null'
+  end
+
+  if vm_config[:service_flags][:tusd]
+    config.vm.network 'forwarded_port', guest: 1080, host: 8080
+    config.vm.provision 'shell', inline: '/tmp/tusd/installer/doInstall.sh'
+  end
+
+  if vm_config[:service_flags][:nextflow]
+    config.vm.provision "shell", inline: <<-EOF
+    # Install docker
+    apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+    apt-key fingerprint 0EBFCD88
+    add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+    apt-get update
+    apt-get install -y docker-ce
+    groupadd docker
+    usermod -aG docker vagrant
+    # Install nextflow
+    apt install -y default-jre-headless
+    cd /usr/bin
+    curl -s https://get.nextflow.io | bash
+    chmod o+rwx nextflow
+    EOF
+  end
+
+  if vm_config[:service_flags][:mongodb]
+    config.vm.provision "shell", inline: <<-EOF
+   apt install -y mongodb
+    EOF
+  end
+
+  if vm_config[:service_flags][:opeb_submission_api]
+    config.vm.network 'forwarded_port', guest: 5000, host: 5000
+    config.vm.provision "shell", inline: <<-EOF
+    add-apt-repository ppa:deadsnakes/ppa
+    apt update
+    apt install -y python3.6
+    ln -s python3.6 /usr/bin/python3
+    curl https://bootstrap.pypa.io/get-pip.py | python3.6
+    pip3 install pipenv
+    [ -d opeb-submission-api ] || git clone https://github.com/inab/opeb-submission-api.git
+    cd opeb-submission-api
+    pipenv install --skip-lock
+    pipenv run ./api.py api
+    EOF
+  end
+
+  # Run provision test from the guest machine
+
+  if vm_config[:test_flags][:sftp]
+    config.vm.provision 'shell', inline: <<-EOF
+    cd /tmp/tests/guest/submitter
+    ./submitter_tests.sh
+    EOF
+  end
+
+  # Run SFTP test from the host machine
+  # Use vagrant-host-shell plugin if exists for speed up the package management
+
+  if vm_config[:test_flags][:sftp]
+    if Vagrant.has_plugin?('vagrant-host-shell')
+      config.vm.provision :host_shell do |host_shell|
+        host_shell.inline = <<-EOF
+        echo 'Running external SFTP tests...'
+        ../tests/host/submitter_sftp_tests.sh
+        EOF
+        config.vm.provision 'shell', inline: <<-EOF
+        cd /tmp/tests/guest/submitter
+        ./submitter_tests_after_sftp.sh
+        EOF
+      end
+    else
+      STDERR.puts "\e[31m\e[1mvagrant-host-shell is required for running SFTP tests"
+      STDERR.puts "install with: 'bundler install'"
+      STDERR.puts "and run with: 'bundler exec vagrant'\e[0m"
+    end
+  end
+
+  if vm_config[:test_flags][:tusd]
+    config.vm.provision 'shell', inline: <<-EOF
+      apt install -y python3-pip jq
+      pip3 install tuspy
+      cd /tmp/tests/guest/tusd
+      echo "test" > test.txt
+      ./tusd.sh
+    EOF
+  end
+
+  if vm_config[:test_flags][:nextflow]
+    config.vm.provision 'shell', inline: <<-EOF
+    cd /tmp/tests/guest/nextflow
+    ./nextflow_tests.sh
+    EOF
+  end
+
+  if vm_config[:test_flags][:mongodb]
+    config.vm.provision 'shell', inline: <<-EOF
+    cd /tmp/tests/guest/mongodb
+    ./mongodb.sh
+    EOF
+  end
+
+  if vm_config[:test_flags][:opeb_submission_api]
+    config.vm.provision 'shell', inline: <<-EOF
+    # TODO
+    EOF
+  end
+end

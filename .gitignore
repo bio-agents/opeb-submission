@@ -1,0 +1,7 @@
+_site
+vendor
+.sass-cache
+.vagrant
+work
+.nextflow*
+nextflow_working_directory
